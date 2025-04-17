@@ -16,13 +16,13 @@ class Point p where
       coord :: Int -> p -> Double
 
       -- |dist2 returns the squared distance between two points.
-      dist2 :: p -> p -> Double
-      dist2 a b = sum . map diff2 $ [0..dimension a - 1]
-        where diff2 i = (coord i a - coord i b)^2
+      -- dist2 :: p -> p -> Double
+      -- dist2 a b = sum . map diff2 $ [0..dimension a - 1]
+      --   where diff2 i = (coord i a - coord i b)^2
 
 -- |compareDistance p a b  compares the distances of a and b to p.
-compareDistance :: (Point p) => p -> p -> p -> Ordering
-compareDistance p a b = dist2 p a `compare` dist2 p b
+-- compareDistance :: (Point p) => (p -> p -> Double) -> p -> p -> p -> Ordering
+-- compareDistance dist p a b = dist p a `compare` dist p b
 
 data Point3d = Point3d { p3x :: Double, p3y :: Double, p3z :: Double }
     deriving (Eq, Ord, Show)
@@ -89,41 +89,65 @@ subtrees :: KdTree p -> [KdTree p]
 subtrees KdEmpty               = [KdEmpty]
 subtrees t@(KdNode l x r axis) = subtrees l ++ [t] ++ subtrees r
 
--- |nearestNeighbor tree p returns the nearest neighbor of p in tree.
+-- |nearestNeighbor tree p returns the nearest neighbor of p in tree using Euclidean distance
 nearestNeighbor :: Point p => KdTree p -> p -> Maybe p
-nearestNeighbor KdEmpty probe = Nothing
-nearestNeighbor (KdNode KdEmpty p KdEmpty _) probe = Just p
-nearestNeighbor (KdNode l pivot r axis) probe =
-    if xProbe < xPivot then findNearest l r else findNearest r l
-    where xProbe = coord axis probe
-          xPivot = coord axis pivot
-          findNearest tree1 tree2 =
-                let candidate1 = case nearestNeighbor tree1 probe of
-                                   Nothing   -> pivot
-                                   Just best -> L.minimumBy (compareDistance probe) [best, pivot]
-                    sphereIntersectsPlane = (xProbe - xPivot)^2 <= dist2 probe candidate1
-                    candidates2 = if sphereIntersectsPlane
-                                    then candidate1 : maybeToList (nearestNeighbor tree2 probe)
-                                    else [candidate1] in
-                Just . L.minimumBy (compareDistance probe) $ candidates2
+nearestNeighbor = nearestNeighborBy dist
+  where
+    dist a b = sum [ (coord i a - coord i b) ^ 2 | i <- [0 .. dimension a - 1] ]
+
+-- nearestNeighbor KdEmpty probe = Nothing
+-- nearestNeighbor (KdNode KdEmpty p KdEmpty _) probe = Just p
+-- nearestNeighbor (KdNode l pivot r axis) probe =
+--     if xProbe < xPivot then findNearest l r else findNearest r l
+--     where xProbe = coord axis probe
+--           xPivot = coord axis pivot
+--           findNearest tree1 tree2 =
+--                 let candidate1 = case nearestNeighbor tree1 probe of
+--                                    Nothing   -> pivot
+--                                    Just best -> L.minimumBy (compareDistance probe) [best, pivot]
+--                     sphereIntersectsPlane = (xProbe - xPivot)^2 <= dist2 probe candidate1
+--                     candidates2 = if sphereIntersectsPlane
+--                                     then candidate1 : maybeToList (nearestNeighbor tree2 probe)
+--                                     else [candidate1] in
+--                 Just . L.minimumBy (compareDistance probe) $ candidates2
+
+
+-- |nearestNeighbor tree p returns the nearest neighbor of p in tree using the distance function
+nearestNeighborBy :: (Point p) => (p -> p -> Double) -> KdTree p -> p -> Maybe p
+nearestNeighborBy _ KdEmpty _ = Nothing
+nearestNeighborBy _ (KdNode KdEmpty p KdEmpty _) _ = Just p
+nearestNeighborBy dist (KdNode l pivot r axis) probe =
+    if xProbe < xPivot then search l r else search r l
+  where
+    xProbe = coord axis probe
+    xPivot = coord axis pivot
+    search tree1 tree2 =
+        let best1 = fromMaybe pivot (nearestNeighborBy dist tree1 probe)
+            bestSoFar = if dist probe best1 < dist probe pivot then best1 else pivot
+            shouldCheckOtherSide = (xProbe - xPivot)^2 <= dist probe bestSoFar
+            bests = if shouldCheckOtherSide
+                      then bestSoFar : maybeToList (nearestNeighborBy dist tree2 probe)
+                      else [bestSoFar]
+        in Just $ L.minimumBy (\a b -> compare (dist probe a) (dist probe b)) bests
+
 
 -- |nearNeighbors tree p returns all neighbors within distance r from p in tree.
-nearNeighbors :: Point p => KdTree p -> Double -> p -> [p]
-nearNeighbors KdEmpty radius probe                      = []
-nearNeighbors (KdNode KdEmpty p KdEmpty _) radius probe = [p | dist2 p probe <= radius^2]
-nearNeighbors (KdNode l p r axis) radius probe          =
+nearNeighbors :: Point p => (p -> p -> Double) -> KdTree p -> Double -> p -> [p]
+nearNeighbors dist KdEmpty radius probe                      = []
+nearNeighbors dist (KdNode KdEmpty p KdEmpty _) radius probe = [p | dist p probe <= radius^2]
+nearNeighbors dist (KdNode l p r axis) radius probe          =
     if xProbe <= xp
-      then let nearest = maybePivot ++ nearNeighbors l radius probe
+      then let nearest = maybePivot ++ nearNeighbors dist l radius probe
            in if xProbe + abs radius > xp
-                then nearNeighbors r radius probe ++ nearest
+                then nearNeighbors dist r radius probe ++ nearest
                 else nearest
-      else let nearest = maybePivot ++ nearNeighbors r radius probe
+      else let nearest = maybePivot ++ nearNeighbors dist r radius probe
            in if xProbe - abs radius < xp
-                then nearNeighbors l radius probe ++ nearest
+                then nearNeighbors dist l radius probe ++ nearest
                 else nearest
   where xProbe     = coord axis probe
         xp         = coord axis p
-        maybePivot = [p | dist2 probe p <= radius^2]
+        maybePivot = [p | dist probe p <= radius^2]
 
 -- |isValid tells whether the K-D tree property holds for a given tree.
 -- Specifically, it tests that all points in the left subtree lie to the left
@@ -142,11 +166,11 @@ allSubtreesAreValid :: Point p => KdTree p -> Bool
 allSubtreesAreValid = all isValid . subtrees
 
 -- |kNearestNeighbors tree k p returns the k closest points to p within tree.
-kNearestNeighbors :: (Eq p, Point p) => KdTree p -> Int -> p -> [p]
-kNearestNeighbors KdEmpty _ _ = []
-kNearestNeighbors _ k _ | k <= 0 = []
-kNearestNeighbors tree k probe = nearest : kNearestNeighbors tree' (k-1) probe
-    where nearest = fromJust $ nearestNeighbor tree probe
+kNearestNeighbors :: (Eq p, Point p) => (p -> p -> Double) -> KdTree p -> Int -> p -> [p]
+kNearestNeighbors _ KdEmpty _ _ = []
+kNearestNeighbors _ _ k _ | k <= 0 = []
+kNearestNeighbors dist tree k probe = nearest : kNearestNeighbors dist tree' (k-1) probe
+    where nearest = fromJust $ nearestNeighborBy dist tree probe
           tree' = tree `remove` nearest
 
 -- |remove t p removes the point p from t.
