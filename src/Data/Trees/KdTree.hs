@@ -21,8 +21,8 @@ class Point p where
       --   where diff2 i = (coord i a - coord i b)^2
 
 -- |compareDistance p a b  compares the distances of a and b to p.
--- compareDistance :: (Point p) => (p -> p -> Double) -> p -> p -> p -> Ordering
--- compareDistance dist p a b = dist p a `compare` dist p b
+-- compareDistance :: (Point p) => p -> p -> p -> Ordering
+-- compareDistance p a b = dist2 p a `compare` dist2 p b
 
 data Point3d = Point3d { p3x :: Double, p3y :: Double, p3z :: Double }
     deriving (Eq, Ord, Show)
